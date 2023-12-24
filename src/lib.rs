@@ -5,7 +5,7 @@ use crate::mercurial_file::MercurialFile;
 use std::path::PathBuf;
 use std::process::Command;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct MercurialRepository {
     fail: bool,
     path: PathBuf,
