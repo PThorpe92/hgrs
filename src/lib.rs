@@ -44,6 +44,9 @@ impl MercurialRepository {
     }
 
     pub fn get_status(&self, file_name: PathBuf) -> FileStatus {
+        if self.fail {
+            panic!("hg not found");
+        }
         self.files
             .iter()
             .find(|f| f.path == file_name)
