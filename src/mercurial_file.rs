@@ -11,7 +11,13 @@ pub enum FileStatus {
     Ignored,
 }
 
-#[derive(Debug)]
+impl Default for FileStatus {
+    fn default() -> Self {
+        FileStatus::NotTracked
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct MercurialFile {
     pub path: PathBuf,
     pub status: FileStatus,

@@ -5,7 +5,7 @@ use crate::mercurial_file::MercurialFile;
 use std::path::PathBuf;
 use std::process::Command;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct MercurialRepository {
     fail: bool,
     path: PathBuf,
@@ -13,9 +13,27 @@ pub struct MercurialRepository {
     pub raw_statuses: Vec<String>,
 }
 
+pub fn is_mercurial_repository(path: &PathBuf) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    if !path.is_dir() {
+        return false;
+    }
+    if !path.join(".hg").exists() {
+        return false;
+    }
+    true
+}
+
 impl MercurialRepository {
-    pub fn new(path_buf: PathBuf) -> MercurialRepository {
-        let fail = match Command::new("which").arg("hg").status() {
+    pub fn new(path_buf: &PathBuf) -> MercurialRepository {
+        let fail = match Command::new("which")
+            .arg("hg")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+        {
             Ok(s) if s.success() => false,
             _ => true,
         };
@@ -23,7 +41,7 @@ impl MercurialRepository {
             panic!("hg not found");
         };
         let raw_statuses = Command::new("hg")
-            .current_dir(&path_buf)
+            .current_dir(path_buf)
             .arg("status")
             .arg("--all")
             .output()
@@ -33,7 +51,7 @@ impl MercurialRepository {
         let rows: Vec<_> = statuses.split('\n').collect();
         let mut repo = MercurialRepository {
             fail,
-            path: path_buf,
+            path: (*(path_buf.clone())).to_owned(),
             files: vec![],
             raw_statuses: rows.iter().map(|s| s.to_string()).collect(),
         };
