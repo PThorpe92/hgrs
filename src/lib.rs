@@ -2,6 +2,7 @@ mod mercurial_file;
 
 pub use crate::mercurial_file::FileStatus;
 use crate::mercurial_file::MercurialFile;
+use log::debug;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -88,6 +89,10 @@ impl MercurialRepository {
             panic!("hg not found");
         }
         let name = file_name.strip_prefix(&self.path).unwrap();
+        if file_name.is_dir() {
+            debug!("{} is a directory", name.display());
+            return FileStatus::Directory;
+        }
         self.files
             .iter()
             .find(|f| f.path == name)

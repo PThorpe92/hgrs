@@ -9,6 +9,7 @@ pub enum FileStatus {
     Missing,
     NotTracked,
     Ignored,
+    Directory,
 }
 
 impl Default for FileStatus {
