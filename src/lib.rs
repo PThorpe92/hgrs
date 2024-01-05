@@ -27,6 +27,21 @@ pub fn is_mercurial_repository(path: &PathBuf) -> bool {
     true
 }
 
+pub fn find_repo_recursively(path: &PathBuf, mut depth_max: u32) -> Option<MercurialRepository> {
+    if is_mercurial_repository(path) {
+        return Some(MercurialRepository::new(path));
+    }
+    let mut p = path.clone();
+    while depth_max > 0 {
+        p = p.parent().unwrap().to_path_buf();
+        if is_mercurial_repository(&p) {
+            return Some(MercurialRepository::new(&p));
+        }
+        depth_max -= 1;
+    }
+    None
+}
+
 impl MercurialRepository {
     pub fn new(path_buf: &PathBuf) -> MercurialRepository {
         let fail = match Command::new("which")
