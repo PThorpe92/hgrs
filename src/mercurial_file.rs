@@ -1,21 +1,15 @@
 use std::path::PathBuf;
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum FileStatus {
     Modified,
     Added,
     Removed,
     Clean,
     Missing,
+    #[default]
     NotTracked,
     Ignored,
     Directory,
-}
-
-impl Default for FileStatus {
-    fn default() -> Self {
-        FileStatus::NotTracked
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -24,8 +18,8 @@ pub struct MercurialFile {
     pub status: FileStatus,
 }
 
-impl From<String> for MercurialFile {
-    fn from(value: String) -> Self {
+impl From<&str> for MercurialFile {
+    fn from(value: &str) -> Self {
         let status = value.chars().nth(0).unwrap();
         let path: String = value.chars().skip(2).collect();
 
