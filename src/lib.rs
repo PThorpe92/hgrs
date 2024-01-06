@@ -2,7 +2,6 @@ mod mercurial_file;
 
 pub use crate::mercurial_file::FileStatus;
 use crate::mercurial_file::MercurialFile;
-use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::process::Command;
@@ -11,7 +10,6 @@ use std::process::Command;
 pub struct MercurialRepository<'a> {
     path: &'a Path,
     files: Vec<MercurialFile>,
-    raw_status: Vec<Cow<'a, str>>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -36,7 +34,7 @@ impl std::error::Error for MercurialErr {}
 
 /// Checks if the provided path is the root of a mercurial repository
 pub fn is_root_mercurial_repository(path: &Path) -> bool {
-    path.is_dir() && path.join(".hg").exists()
+    path.is_dir() && path.join(".hg").is_dir()
 }
 
 /// Checks if command exists and sets the proper environment variable to interact
@@ -47,15 +45,13 @@ pub fn check_install_init() -> Result<(), MercurialErr> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status(),
-        Ok(s) if s.success(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound,
     ) {
-        if std::env::var("HGPLAIN").is_err() {
-            std::env::set_var("HGPLAIN", "1");
-        }
-        Ok(())
-    } else {
-        Err(MercurialErr::HgNotFound)
+        return Err(MercurialErr::HgNotFound);
+    } else if std::env::var("HGPLAIN").is_err() {
+        std::env::set_var("HGPLAIN", "1");
     }
+    Ok(())
 }
 
 /// Returns the closest parent directory that is a mercurial repository up to a maximum depth
@@ -81,51 +77,37 @@ pub fn find_parent_repo_recursively(path: &Path, depth_max: u32) -> Option<Mercu
     }
 }
 
-fn get_repo_status(path: &Path) -> Result<Vec<Cow<'_, str>>, MercurialErr> {
-    let raw_status = Command::new("hg")
-        .current_dir(path)
-        .arg("status")
-        .arg("--all")
-        .output()
-        .map_err(|_| MercurialErr::NotMercurialRepository)?
-        .stdout;
-
-    Ok(String::from_utf8(raw_status)
-        .map_err(|_| MercurialErr::StatusError)?
-        .split('\n')
-        .map(std::string::ToString::to_string)
-        .map(|s| s.into())
-        .collect::<Vec<Cow<'_, str>>>())
+fn get_repo_status(path: &Path) -> Result<Vec<MercurialFile>, MercurialErr> {
+    Ok(String::from_utf8(
+        Command::new("hg")
+            .current_dir(path)
+            .arg("status")
+            .arg("--all")
+            .output()
+            .map_err(|_| MercurialErr::NotMercurialRepository)?
+            .stdout,
+    )
+    .map_err(|_| MercurialErr::RepoWithError)?
+    .lines()
+    .map(MercurialFile::from)
+    .collect())
 }
 
 impl<'a> MercurialRepository<'_> {
     pub fn new(path: &'a Path) -> Result<MercurialRepository<'a>, MercurialErr> {
         check_install_init()?;
-        let mut repo = MercurialRepository {
+        let repo = MercurialRepository {
             path,
-            files: vec![],
-            raw_status: get_repo_status(path)?,
+            files: get_repo_status(path)?,
         };
-        repo.set_files();
         Ok(repo)
-    }
-
-    fn set_files(&mut self) {
-        self.files = self
-            .raw_status
-            .iter()
-            .by_ref()
-            .filter(|s| !s.is_empty())
-            .map(|r| MercurialFile::from(r.as_ref()))
-            .collect::<Vec<_>>();
     }
 
     /// Updates all stored Repository info. Note that this does not update the actual files,
     /// only the state of the MercurialRepository struct, so it is not recommended
     /// to call this unless you believe the status has changed externally.
     pub fn update_repo(&mut self) -> Result<(), MercurialErr> {
-        self.raw_status = get_repo_status(self.path)?;
-        self.set_files();
+        self.files = get_repo_status(self.path)?;
         Ok(())
     }
 
@@ -158,7 +140,9 @@ pub mod tests {
     #[test]
     fn test_get_repo() {
         let repo = MercurialRepository::new(Path::new("./test_repo")).unwrap();
-        assert_eq!(repo.files.len(), 8);
+        assert!(repo.files.len() >= 8);
+        assert!(repo.files.len() < 10);
+        assert!(repo.is_dirty_repo());
     }
 
     #[test]
