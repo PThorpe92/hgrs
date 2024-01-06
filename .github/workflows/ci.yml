@@ -1,0 +1,44 @@
+name: Build and Test
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install Deps On Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install mercurial
+
+      - name: Set up Homebrew
+        if: runner.os == 'MacOS'
+        run: |
+          brew install mercurial
+
+      - name: Install winget on windows-latest
+        if: runner.os == 'windows'
+        run: |
+          choco install hg
+
+      - name: Run tests
+        run: cargo test --verbose
