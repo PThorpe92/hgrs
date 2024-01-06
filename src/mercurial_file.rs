@@ -1,4 +1,6 @@
+use std::path::Path;
 use std::path::PathBuf;
+
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum FileStatus {
     Modified,
@@ -14,14 +16,25 @@ pub enum FileStatus {
 
 #[derive(Debug, Clone)]
 pub struct MercurialFile {
-    pub path: PathBuf,
-    pub status: FileStatus,
+    path: PathBuf,
+    status: FileStatus,
+}
+
+impl MercurialFile {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn status(&self) -> FileStatus {
+        self.status
+    }
 }
 
 impl From<&str> for MercurialFile {
     fn from(value: &str) -> Self {
-        let status = value.chars().nth(0).unwrap();
-        let path: String = value.chars().skip(2).collect();
+        let status = value.chars().nth(0).unwrap_or('?');
+        let path: &str = value
+            .get(2..)
+            .unwrap_or_else(|| panic!("Invalid file: {}", value));
 
         MercurialFile {
             path: PathBuf::from(path),
