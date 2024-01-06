@@ -42,8 +42,8 @@ pub fn is_root_mercurial_repository(path: &Path) -> bool {
 /// Checks if command exists and sets the proper environment variable to interact
 /// with hg through a pipe. This function should be called first
 pub fn check_install_init() -> Result<(), MercurialErr> {
-    if matches!(Command::new("which")
-        .arg("hg")
+    if matches!(Command::new("hg")
+        .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status(),
