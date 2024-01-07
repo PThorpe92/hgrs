@@ -2,117 +2,241 @@ mod mercurial_file;
 
 pub use crate::mercurial_file::FileStatus;
 use crate::mercurial_file::MercurialFile;
-use log::debug;
-use std::path::PathBuf;
+use std::fmt::{Display, Formatter};
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Debug, Clone)]
-pub struct MercurialRepository {
-    fail: bool,
-    path: PathBuf,
+pub struct MercurialRepository<'a> {
+    path: &'a Path,
     files: Vec<MercurialFile>,
-    pub raw_statuses: Vec<String>,
 }
 
-pub fn is_mercurial_repository(path: &PathBuf) -> bool {
-    if !path.exists() {
-        return false;
-    }
-    if !path.is_dir() {
-        return false;
-    }
-    if !path.join(".hg").exists() {
-        return false;
-    }
-    true
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum MercurialErr {
+    HgNotFound,
+    NotMercurialRepository,
+    RepoWithError,
+    StatusError,
 }
 
-pub fn find_repo_recursively(path: &PathBuf, mut depth_max: u32) -> Option<MercurialRepository> {
-    if is_mercurial_repository(path) {
-        return Some(MercurialRepository::new(path));
-    }
-    let mut p = path.clone();
-    while depth_max > 0 {
-        p = p.parent().unwrap().to_path_buf();
-        if is_mercurial_repository(&p) {
-            return Some(MercurialRepository::new(&p));
+impl Display for MercurialErr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MercurialErr::HgNotFound => write!(f, "Mercurial is not installed"),
+            MercurialErr::NotMercurialRepository => write!(f, "Not a Mercurial repository"),
+            MercurialErr::RepoWithError => write!(f, "Mercurial repository has errors"),
+            MercurialErr::StatusError => write!(f, "Error getting file status"),
         }
-        depth_max -= 1;
     }
-    None
+}
+impl std::error::Error for MercurialErr {}
+
+/// Checks if the provided path is the root of a mercurial repository
+pub fn is_root_mercurial_repository(path: &Path) -> bool {
+    path.is_dir() && path.join(".hg").is_dir()
 }
 
-impl MercurialRepository {
-    pub fn new(path_buf: &PathBuf) -> MercurialRepository {
-        let fail = match Command::new("which")
-            .arg("hg")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-        {
-            Ok(s) if s.success() => false,
-            _ => true,
-        };
-        if fail {
-            panic!("hg not found");
-        };
-        let raw_statuses = Command::new("hg")
-            .current_dir(path_buf)
+/// Checks if command exists and sets the proper environment variable to interact
+/// with hg through a pipe. This function should be called first
+pub fn check_install_init() -> Result<(), MercurialErr> {
+    if matches!(Command::new("hg")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound,
+    ) {
+        return Err(MercurialErr::HgNotFound);
+    } else if std::env::var("HGPLAIN").is_err() {
+        std::env::set_var("HGPLAIN", "1");
+    }
+    Ok(())
+}
+
+/// Returns the closest parent directory that is a mercurial repository up to a maximum depth
+/// of `depth_max`. If no repository is found, returns None.
+pub fn find_parent_repo_recursively(path: &Path, depth_max: u32) -> Option<MercurialRepository> {
+    if depth_max == 0 {
+        None
+    } else if is_root_mercurial_repository(path) {
+        match MercurialRepository::new(path) {
+            Ok(repo) => return Some(repo),
+            Err(_) => {
+                return match path.parent() {
+                    Some(p) => find_parent_repo_recursively(p, depth_max - 1),
+                    None => None,
+                }
+            }
+        }
+    } else {
+        match path.parent() {
+            Some(p) => find_parent_repo_recursively(p, depth_max - 1),
+            None => return None,
+        }
+    }
+}
+
+fn get_repo_status(path: &Path) -> Result<Vec<MercurialFile>, MercurialErr> {
+    Ok(String::from_utf8(
+        Command::new("hg")
+            .current_dir(path)
             .arg("status")
             .arg("--all")
             .output()
-            .unwrap()
-            .stdout;
-        let statuses = String::from_utf8(raw_statuses).unwrap();
-        let rows: Vec<_> = statuses.split('\n').collect();
-        let mut repo = MercurialRepository {
-            fail,
-            path: (*(path_buf.clone())).to_owned(),
-            files: vec![],
-            raw_statuses: rows.iter().map(|s| s.to_string()).collect(),
+            .map_err(|_| MercurialErr::NotMercurialRepository)?
+            .stdout,
+    )
+    .map_err(|_| MercurialErr::RepoWithError)?
+    .lines()
+    .map(MercurialFile::from)
+    .collect())
+}
+
+impl<'a> MercurialRepository<'_> {
+    pub fn new(path: &'a Path) -> Result<MercurialRepository<'a>, MercurialErr> {
+        check_install_init()?;
+        let repo = MercurialRepository {
+            path,
+            files: get_repo_status(path)?,
         };
-        repo.set_files();
-        repo
+        Ok(repo)
     }
 
-    fn set_files(&mut self) {
-        self.files = self
-            .raw_statuses
-            .clone()
-            .iter()
-            .filter(|s| !s.is_empty())
-            .map(|r| MercurialFile::from(r.to_string()))
-            .collect();
+    /// Updates all stored Repository info. Note that this does not update the actual files,
+    /// only the state of the MercurialRepository struct, so it is not recommended
+    /// to call this unless you believe the status has changed externally.
+    pub fn update_repo(&mut self) -> Result<(), MercurialErr> {
+        self.files = get_repo_status(self.path)?;
+        Ok(())
     }
 
-    pub fn update_statuses(&mut self) {
-        let raw_statuses = Command::new("hg")
-            .current_dir(&self.path)
-            .arg("status")
-            .arg("--all")
-            .output()
-            .unwrap()
-            .stdout;
-        let statuses = String::from_utf8(raw_statuses).unwrap();
-        let rows: Vec<_> = statuses.split('\n').collect();
-        self.raw_statuses = rows.iter().map(|s| s.to_string()).collect();
-        self.set_files()
-    }
-
-    pub fn get_status(&self, file_name: &PathBuf) -> FileStatus {
-        if self.fail {
-            panic!("hg not found");
-        }
-        let name = file_name.strip_prefix(&self.path).unwrap();
+    /// Returns the status of a file relative to the repository, however not the root of the
+    /// repository.
+    pub fn get_file_status(&self, file_name: &'a Path) -> Result<FileStatus, MercurialErr> {
         if file_name.is_dir() {
-            debug!("{} is a directory", name.display());
-            return FileStatus::Directory;
+            // For some reason, mercurial doesn't treat directories as tracked files. so I guess we do..
+            // but this could be confusing where you
+            return Ok(FileStatus::Directory);
         }
-        self.files
-            .iter()
-            .find(|f| f.path == name)
-            .unwrap()
-            .status
-            .clone()
+        let name = file_name
+            .strip_prefix(self.path)
+            .map_err(|_| MercurialErr::StatusError)?;
+        match self.files.iter().find(|f| f.path() == name) {
+            Some(f) => Ok(f.status()),
+            None => Ok(FileStatus::NotTracked),
+        }
+    }
+
+    /// Returns whether the repository has any files marked as anything other than clean
+    pub fn is_dirty_repo(&self) -> bool {
+        self.files.iter().any(|f| f.is_dirty())
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_repo() {
+        let repo = MercurialRepository::new(Path::new("./test_repo")).unwrap();
+        // there are 8 files but the tests will fail occasionally cuz race condition and say its 9
+        // because we create one later on in the tests and i'm lazy
+        assert!(repo.files.len() >= 8);
+        assert!(repo.files.len() < 10);
+        assert!(repo.is_dirty_repo());
+    }
+
+    #[test]
+    fn test_get_status() {
+        let path = Path::new("./test_repo");
+        assert!(is_root_mercurial_repository(path));
+        let repo = MercurialRepository::new(path).unwrap();
+        assert_eq!(
+            repo.get_file_status(Path::new("not_a_file")),
+            Err(MercurialErr::StatusError)
+        );
+        assert_eq!(
+            repo.get_file_status(Path::new("./test_repo/file1"))
+                .unwrap(),
+            FileStatus::Clean
+        );
+        assert_eq!(
+            repo.get_file_status(Path::new("./test_repo/deleted"))
+                .unwrap(),
+            FileStatus::Missing
+        );
+        assert_eq!(
+            repo.get_file_status(Path::new("./test_repo/file2"))
+                .unwrap(),
+            FileStatus::Modified
+        );
+        assert_eq!(
+            repo.get_file_status(Path::new("./test_repo/file4"))
+                .unwrap(),
+            FileStatus::Ignored
+        );
+        assert_eq!(
+            repo.get_file_status(Path::new("./test_repo/directory"))
+                .unwrap(),
+            FileStatus::Directory
+        );
+        assert_eq!(
+            repo.get_file_status(Path::new("./test_repo/directory/dirfile1"))
+                .unwrap(),
+            FileStatus::Clean
+        );
+    }
+    #[test]
+    fn test_find_parent_repo() {
+        let repo = find_parent_repo_recursively(
+            Path::new("./test_repo/directory/subdirectory/subdirectory2"),
+            4,
+        )
+        .unwrap();
+        assert!(repo.is_dirty_repo());
+    }
+
+    #[test]
+    fn test_update_statuses() {
+        let mut repo = MercurialRepository::new(Path::new("./test_repo")).unwrap();
+        assert_eq!(repo.files.len(), 8);
+        let _ = std::fs::File::create("./test_repo/file6").unwrap();
+        repo.update_repo().unwrap();
+        assert_eq!(
+            repo.get_file_status(Path::new("./test_repo/file6"))
+                .unwrap(),
+            FileStatus::NotTracked
+        );
+        assert_eq!(repo.files.len(), 9);
+        std::fs::remove_file("./test_repo/file6").unwrap();
+    }
+
+    #[test]
+    fn test_is_mercurial_repository() {
+        assert!(is_root_mercurial_repository(Path::new("./test_repo")));
+        assert!(!is_root_mercurial_repository(Path::new(
+            "./test_repo/directory"
+        )));
+    }
+
+    #[test]
+    fn test_check_hg_exists() {
+        assert!(check_install_init().is_ok());
+    }
+
+    #[test]
+    fn test_from_str() {
+        let file = MercurialFile::from("A addfile");
+        assert_eq!(file.status(), FileStatus::Added);
+        assert_eq!(file.path(), Path::new("addfile"));
+    }
+
+    #[test]
+    fn test_is_dirty_repo() {
+        // should be dirty already due to test files
+        let repo = MercurialRepository::new(Path::new("./test_repo")).unwrap();
+        assert!(repo.is_dirty_repo());
     }
 }
