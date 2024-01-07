@@ -116,6 +116,7 @@ impl<'a> MercurialRepository<'_> {
     pub fn get_file_status(&self, file_name: &'a Path) -> Result<FileStatus, MercurialErr> {
         if file_name.is_dir() {
             // For some reason, mercurial doesn't treat directories as tracked files. so I guess we do..
+            // but this could be confusing where you
             return Ok(FileStatus::Directory);
         }
         let name = file_name

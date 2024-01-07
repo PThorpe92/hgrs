@@ -8,7 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-
+  RUST_BACKTRACE: 1
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -28,7 +28,7 @@ jobs:
       - name: Install Deps On Linux
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update && sudo apt-get install mercurial
+          sudo apt-get update && sudo apt-get install -y mercurial
 
       - name: Set up Homebrew
         if: runner.os == 'MacOS'
@@ -38,7 +38,7 @@ jobs:
       - name: Install winget on windows-latest
         if: runner.os == 'windows'
         run: |
-          choco install hg
+          choco install -y hg
 
       - name: Run tests
         run: cargo test --verbose
