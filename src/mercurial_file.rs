@@ -37,6 +37,7 @@ impl MercurialFile {
         self.status.is_dirty()
     }
 }
+
 impl From<char> for FileStatus {
     fn from(value: char) -> Self {
         match value {
